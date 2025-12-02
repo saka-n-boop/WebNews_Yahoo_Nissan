@@ -1,3 +1,11 @@
+ご依頼の通り、「もっと見る」ボタンを最大4回押下する処理を追加したプログラムの全文です。
+変更点は get_yahoo_news_with_selenium 関数内（307行目付近）のみです。
+
+code
+Python
+download
+content_copy
+expand_less
 import os
 import json
 import time
@@ -331,6 +339,26 @@ def get_yahoo_news_with_selenium(keyword: str) -> list[dict]:
             EC.visibility_of_element_located((By.CSS_SELECTOR, "li[class*='sc-1u4589e-0']"))
         )
         time.sleep(3)
+
+        # ------------------------------------------------------------------
+        # 追加箇所: 「もっと見る」ボタンを最大4回押下して表示件数を増やす
+        # ------------------------------------------------------------------
+        for i in range(4):
+            try:
+                # ボタン内に「もっと見る」というテキストが含まれる要素を探す (クラス名は変動するためXPathを使用)
+                more_button = WebDriverWait(driver, 5).until(
+                    EC.element_to_be_clickable((By.XPATH, "//button[span[contains(text(), 'もっと見る')]]"))
+                )
+                # JSで強制クリック（オーバーレイ等でクリックできない場合を回避）
+                driver.execute_script("arguments[0].click();", more_button)
+                print(f"  - 「もっと見る」ボタン押下 ({i+1}/4)")
+                # 追加読み込み待機
+                time.sleep(3)
+            except Exception:
+                # ボタンが見つからない、またはクリックできない場合はループ終了
+                break
+        # ------------------------------------------------------------------
+
     except Exception as e:
         print(f"  ?? 検索結果ページロードでタイムアウト: {e}")
     
