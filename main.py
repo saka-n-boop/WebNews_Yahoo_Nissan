@@ -1,11 +1,3 @@
-ご依頼の通り、「もっと見る」ボタンを最大4回押下する処理を追加したプログラムの全文です。
-変更点は get_yahoo_news_with_selenium 関数内（307行目付近）のみです。
-
-code
-Python
-download
-content_copy
-expand_less
 import os
 import json
 import time
