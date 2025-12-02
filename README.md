@@ -1,0 +1,2 @@
+# WebNews_Yahoo_Nissan
+日産のYahooニュース取得プログラム
