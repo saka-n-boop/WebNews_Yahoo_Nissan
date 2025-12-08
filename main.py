@@ -298,9 +298,10 @@ def analyze_article_full(text_to_analyze: str) -> Dict[str, str]:
             if attempt < MAX_RETRIES - 1:
                 time.sleep(2)
                 continue
-            return default_res
-            
-    return default_res
+            else:
+                # 【追加】エラーの正体をログに出力する
+                print(f"    ! Gemini分析エラー詳細: {e}") 
+                return default_res        
 
 # ====== データ取得関数 (Selenium) ======
 
