@@ -64,7 +64,6 @@ for env_name in API_KEY_ENV_NAMES:
         AVAILABLE_API_KEYS.append(key)
 
 if not AVAILABLE_API_KEYS:
-    # 念のため古い変数名もチェック
     single_key = os.environ.get("GOOGLE_API_KEY")
     if single_key:
         AVAILABLE_API_KEYS.append(single_key)
@@ -87,19 +86,14 @@ def get_current_gemini_client() -> Optional[genai.Client]:
     global CURRENT_KEY_INDEX
     if not AVAILABLE_API_KEYS:
         return None
-    
     api_key = AVAILABLE_API_KEYS[CURRENT_KEY_INDEX]
     return genai.Client(api_key=api_key)
 
 def rotate_api_key_if_needed():
     """ リクエスト回数をチェックし、上限を超えていたら次のキーに切り替える """
     global CURRENT_KEY_INDEX, REQUEST_COUNT_PER_KEY
-    
-    if not AVAILABLE_API_KEYS:
-        return
-
+    if not AVAILABLE_API_KEYS: return
     REQUEST_COUNT_PER_KEY += 1
-    
     if REQUEST_COUNT_PER_KEY >= MAX_REQUESTS_BEFORE_ROTATE:
         print(f"    [Key Info] キー#{CURRENT_KEY_INDEX + 1} の使用回数が {REQUEST_COUNT_PER_KEY}回 に達しました。")
         CURRENT_KEY_INDEX = (CURRENT_KEY_INDEX + 1) % len(AVAILABLE_API_KEYS)
@@ -107,8 +101,7 @@ def rotate_api_key_if_needed():
         print(f"    [Key Info] キー#{CURRENT_KEY_INDEX + 1} に切り替えます。")
 
 def gspread_util_col_to_letter(col_index: int) -> str:
-    if col_index < 1:
-        raise ValueError("Column index must be 1 or greater")
+    if col_index < 1: raise ValueError("Column index must be 1 or greater")
     a1_notation = gspread.utils.rowcol_to_a1(1, col_index)
     return re.sub(r'\d+', '', a1_notation)
 
@@ -122,7 +115,7 @@ def parse_post_date(raw, today_jst: datetime) -> Optional[datetime]:
     if raw is None: return None
     if isinstance(raw, str):
         s = raw.strip()
-        s = re.sub(r"\([月火水木金土日]\)$", "", s).strip()
+        s = re.sub(r"\([月火水木金土日]\)", "", s).strip() # 曜日削除
         s = s.replace('配信', '').strip()
         
         for fmt in ("%Y/%m/%d %H:%M:%S", "%y/%m/%d %H:%M", "%m/%d %H:%M", "%Y/%m/%d %H:%M"):
@@ -130,6 +123,7 @@ def parse_post_date(raw, today_jst: datetime) -> Optional[datetime]:
                 dt = datetime.strptime(s, fmt)
                 if fmt == "%m/%d %H:%M":
                     dt = dt.replace(year=today_jst.year)
+                # 未来日付なら去年に補正
                 if dt.replace(tzinfo=TZ_JST) > today_jst + timedelta(days=31):
                     dt = dt.replace(year=dt.year - 1)
                 return dt.replace(tzinfo=TZ_JST)
@@ -141,7 +135,6 @@ def build_gspread_client() -> gspread.Client:
     try:
         creds_str = os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        
         if creds_str:
             info = json.loads(creds_str)
             credentials = ServiceAccountCredentials.from_json_keyfile_dict(info, scope)
@@ -160,15 +153,13 @@ def load_keywords(filename: str) -> List[str]:
         return keywords
     except FileNotFoundError:
         return []
-    except Exception as e:
-        print(f"キーワードファイルの読み込みエラー: {e}")
+    except Exception:
         return []
 
 def load_merged_prompt() -> str:
     global GEMINI_PROMPT_TEMPLATE
     if GEMINI_PROMPT_TEMPLATE is not None:
         return GEMINI_PROMPT_TEMPLATE
-        
     combined_instructions = []
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -176,20 +167,14 @@ def load_merged_prompt() -> str:
         file_path = os.path.join(script_dir, role_file)
         with open(file_path, 'r', encoding='utf-8') as f:
             role_instruction = f.read().strip()
-        
         for filename in ALL_PROMPT_FILES[1:]:
             file_path = os.path.join(script_dir, filename)
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read().strip()
-            if content:
-                combined_instructions.append(content)
-                        
+            if content: combined_instructions.append(content)
         base_prompt = role_instruction + "\n" + "\n".join(combined_instructions)
         base_prompt += "\n\n【重要】\n該当する情報（特に日産への言及やネガティブ要素）がない場合は、説明文や翻訳を一切書かず、必ず単語で『なし』とだけ出力してください。"
-        
-        # バッチ処理用のプレースホルダーに変更
         base_prompt += "\n\n以下は分析対象の複数の記事データです。JSON配列形式で、各記事IDに対応する分析結果を出力してください。\n\n{TEXT_TO_ANALYZE}"
-
         GEMINI_PROMPT_TEMPLATE = base_prompt
         return base_prompt
     except Exception as e:
@@ -200,11 +185,10 @@ def request_with_retry(url: str, max_retries: int = 3) -> Optional[requests.Resp
     for attempt in range(max_retries):
         try:
             res = requests.get(url, headers=REQ_HEADERS, timeout=20)
-            if res.status_code == 404:
-                return None
+            if res.status_code == 404: return None
             res.raise_for_status()
             return res
-        except requests.exceptions.RequestException as e:
+        except requests.exceptions.RequestException:
             if attempt < max_retries - 1:
                 time.sleep(2 ** attempt + random.random())
             else:
@@ -216,13 +200,11 @@ def set_row_height(ws: gspread.Worksheet, row_height_pixels: int):
         requests = [{
            "updateDimensionProperties": {
                  "range": {"sheetId": ws.id, "dimension": "ROWS", "startIndex": 1, "endIndex": ws.row_count},
-                 "properties": {"pixelSize": row_height_pixels},
-                 "fields": "pixelSize"
+                 "properties": {"pixelSize": row_height_pixels}, "fields": "pixelSize"
             }
         }]
         ws.spreadsheet.batch_update({"requests": requests})
-    except Exception:
-        pass
+    except Exception: pass
 
 def update_sheet_with_retry(ws, range_name, values, max_retries=3):
     for attempt in range(max_retries):
@@ -237,19 +219,13 @@ def update_sheet_with_retry(ws, range_name, values, max_retries=3):
                 time.sleep(10 * (attempt + 1))
     print(f"  !! 最終リトライ失敗: {range_name} の更新をスキップします。")
 
-
 # ====== Gemini 分析関数 (バッチ＆単体両対応) ======
 
 def call_gemini_api(prompt: str, is_batch: bool = False) -> Any:
-    """ API呼び出しの共通部分（キーローテーション、リトライ、RPM待機含む） """
-    
-    # プロンプトのロード
     template = load_merged_prompt()
     if not template: return None
-
     final_prompt = template.replace("{TEXT_TO_ANALYZE}", prompt)
     
-    # 出力スキーマの定義
     response_properties = {
         "company_info": {"type": "string", "description": "記事の主題企業名"},
         "category": {"type": "string", "description": "カテゴリ分類"},
@@ -259,88 +235,58 @@ def call_gemini_api(prompt: str, is_batch: bool = False) -> Any:
     }
     
     if is_batch:
-        # バッチ時は、IDを含んだオブジェクトの配列を期待する
         response_properties["id"] = {"type": "integer", "description": "記事ID"}
         schema = {"type": "array", "items": {"type": "object", "properties": response_properties}}
     else:
-        # 単体時はオブジェクトそのもの
         schema = {"type": "object", "properties": response_properties}
 
     max_retries = 2
-    
     for attempt in range(max_retries + 1):
         client = get_current_gemini_client()
         if not client: return None
-        
         try:
-            # キーの使用カウントチェック & 切り替え
             rotate_api_key_if_needed()
-            
             response = client.models.generate_content(
-                model='gemini-2.5-flash', # または gemini-1.5-flash
+                model='gemini-2.5-flash', 
                 contents=final_prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=schema
-                ),
+                config=types.GenerateContentConfig(response_mime_type="application/json", response_schema=schema),
             )
-            
-            # API成功時: RPM対策として指定秒数待機
             time.sleep(NORMAL_WAIT_SECONDS)
-            
             return json.loads(response.text.strip())
-
         except (ResourceExhausted, ServiceUnavailable, InternalServerError) as e:
             print(f"    ! Gemini API エラー (Attempt {attempt+1}): {e}")
             if attempt < max_retries:
                 print("      -> 30秒待機してリトライします...")
                 time.sleep(30)
                 continue
-            else:
-                return None
+            else: return None
         except Exception as e:
             print(f"    ! Gemini 予期せぬエラー: {e}")
             return None
     return None
 
 def analyze_batch(rows_data: List[Dict]) -> Dict[int, Dict]:
-    """ 複数行をまとめて分析する """
-    # 入力テキストの構築
     input_text = ""
     for item in rows_data:
-        # 文字数制限対策（1記事あたり3000文字程度に制限）
         body_short = item['body'][:3000]
         input_text += f"【記事ID: {item['id']}】\n{body_short}\n----------------\n"
-
     result_map = {}
-    
-    # バッチAPI呼び出し
     print(f"    ... {len(rows_data)}件をまとめてAPIリクエスト中 (Key#{CURRENT_KEY_INDEX+1}) ...")
     api_response = call_gemini_api(input_text, is_batch=True)
-    
     if api_response and isinstance(api_response, list):
         for res_item in api_response:
             r_id = res_item.get("id")
-            if r_id is not None:
-                result_map[r_id] = res_item
-    
+            if r_id is not None: result_map[r_id] = res_item
     return result_map
 
 def analyze_single(body: str) -> Dict[str, str]:
-    """ 1行だけ分析する（フォールバック用） """
     body_short = body[:10000]
     res = call_gemini_api(body_short, is_batch=False)
-    
-    default_res = {
-        "company_info": "N/A", "category": "N/A", "sentiment": "N/A",
-        "nissan_related": "なし", "nissan_negative": "なし"
-    }
-    
-    if res and isinstance(res, dict):
-        return {**default_res, **res}
+    default_res = {"company_info": "N/A", "category": "N/A", "sentiment": "N/A", "nissan_related": "なし", "nissan_negative": "なし"}
+    if res and isinstance(res, dict): return {**default_res, **res}
     return default_res
 
-# ====== Selenium関連関数 (変更なし) ======
+# ====== Selenium関連関数 ======
 def get_yahoo_news_with_selenium(keyword: str) -> list[dict]:
     print(f"  Yahoo!ニュース検索開始 (キーワード: {keyword})...")
     options = Options()
@@ -362,7 +308,6 @@ def get_yahoo_news_with_selenium(keyword: str) -> list[dict]:
         
     search_url = f"https://news.yahoo.co.jp/search?p={keyword}&ei=utf-8&categories=domestic,world,business,it,science,life,local"
     driver.get(search_url)
-    
     try:
         WebDriverWait(driver, 20).until(EC.visibility_of_element_located((By.CSS_SELECTOR, "li[class*='sc-1u4589e-0']")))
         time.sleep(3)
@@ -371,10 +316,8 @@ def get_yahoo_news_with_selenium(keyword: str) -> list[dict]:
                 more_button = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, "//button[span[contains(text(), 'もっと見る')]]")))
                 driver.execute_script("arguments[0].click();", more_button)
                 time.sleep(3)
-            except Exception:
-                break
-    except Exception:
-        pass
+            except Exception: break
+    except Exception: pass
     
     soup = BeautifulSoup(driver.page_source, "html.parser")
     driver.quit()
@@ -394,23 +337,41 @@ def get_yahoo_news_with_selenium(keyword: str) -> list[dict]:
             time_tag = article.find("time")
             if time_tag: date_str = time_tag.text.strip()
             
+            # 【復活】ソース抽出の強化（spanタグ探索）
             source_text = ""
             source_container = article.find("div", class_=re.compile("sc-n3vj8g-0"))
             if source_container:
                 time_and_comments = source_container.find("div", class_=re.compile("sc-110wjhy-8"))
                 if time_and_comments:
-                    for content in time_and_comments.contents:
-                        if content.name is None and content.strip() and not re.match(r'\d{1,2}/\d{1,2}.*\d{2}:\d{2}', content.strip()):
-                            source_text = content.strip()
-                            break
+                    source_candidates = [
+                        span.text.strip() for span in time_and_comments.find_all("span")
+                        if not span.find("svg") and not re.match(r'\d{1,2}/\d{1,2}.*\d{2}:\d{2}', span.text.strip())
+                    ]
+                    if source_candidates:
+                        source_text = max(source_candidates, key=len)
+                    if not source_text:
+                        for content in time_and_comments.contents:
+                            if content.name is None and content.strip() and not re.match(r'\d{1,2}/\d{1,2}.*\d{2}:\d{2}', content.strip()):
+                                source_text = content.strip()
+                                break
             
             if title and url:
+                # 【復活】日付の事前クリーニング（ソート対策）
+                formatted_date = date_str
+                try:
+                    dt_obj = parse_post_date(date_str, today_jst)
+                    if dt_obj:
+                        formatted_date = format_datetime(dt_obj)
+                    else:
+                        formatted_date = re.sub(r"\([月火水木金土日]\)", "", date_str).replace('配信', '').strip()
+                except: pass
+
                 articles_data.append({
                     "URL": url, "タイトル": title, 
-                    "投稿日時": date_str, "ソース": source_text or "取得不可"
+                    "投稿日時": formatted_date if formatted_date else "取得不可", 
+                    "ソース": source_text if source_text else "取得不可"
                 })
-        except Exception:
-            continue
+        except Exception: continue
     return articles_data
 
 def fetch_article_body_and_comments(base_url: str) -> Tuple[str, int, Optional[str]]:
@@ -431,7 +392,6 @@ def fetch_article_body_and_comments(base_url: str) -> Tuple[str, int, Optional[s
             if cmt_btn:
                 m = re.search(r'(\d+)', cmt_btn.get_text(strip=True).replace(",", ""))
                 if m: comment_count = int(m.group(1))
-            
             article_temp = soup.find('article') or soup.find('div', class_=re.compile(r'article_body|article_detail'))
             if article_temp:
                 temp_text = article_temp.get_text()[:500]
@@ -441,7 +401,8 @@ def fetch_article_body_and_comments(base_url: str) -> Tuple[str, int, Optional[s
         article_content = soup.find('article') or soup.find('div', class_='article_body') or soup.find('div', class_=re.compile(r'article_detail|article_body'))
         page_text_blocks = []
         if article_content:
-            for noise in article_content.find_all(['button', 'a', 'div'], class_=re.compile(r'reaction|rect|module|link|footer|comment')):
+            # 【復活】厳密なノイズ除去
+            for noise in article_content.find_all(['button', 'a', 'div'], class_=re.compile(r'reaction|rect|module|link|footer|comment|recommended')):
                 noise.decompose()
             paragraphs = article_content.find_all('p', class_=re.compile(r'sc-\w+-0\s+\w+.*highLightSearchTarget')) or article_content.find_all('p')
             for p in paragraphs:
@@ -497,10 +458,13 @@ def fetch_details_and_update_sheet(gc: gspread.Client):
     for idx, data_row in enumerate(all_values[1:]):
         if len(data_row) < len(YAHOO_SHEET_HEADERS): data_row.extend([''] * (len(YAHOO_SHEET_HEADERS) - len(data_row)))
         row_num = idx + 2
-        url, post_date_raw, body = str(data_row[0]), str(data_row[2]), str(data_row[4])
+        url = str(data_row[0])
+        post_date_raw = str(data_row[2])
+        current_body = str(data_row[4])
+        comment_count_str = str(data_row[5])
         
         if not url.startswith('http'): continue
-        is_fetched = (body.strip() and body != "本文取得不可")
+        is_fetched = (current_body.strip() and current_body != "本文取得不可")
         dt_obj = parse_post_date(post_date_raw, now_jst)
         is_recent = (dt_obj and dt_obj >= three_days_ago)
         
@@ -509,12 +473,25 @@ def fetch_details_and_update_sheet(gc: gspread.Client):
         print(f"  - 行 {row_num}: 詳細取得中...")
         fetched_body, cmt_cnt, ext_date = fetch_article_body_and_comments(url)
         
-        new_row = [format_datetime(parse_post_date(ext_date, now_jst)) if ext_date else post_date_raw,
-                   str(data_row[3]), fetched_body, str(cmt_cnt) if cmt_cnt != -1 else str(data_row[5])]
+        # 【新機能】削除済み記事の本文保護ロジック
+        final_body = current_body
+        if fetched_body != "本文取得不可":
+            final_body = fetched_body
+        elif current_body == "" or current_body == "本文取得不可":
+            # 元々空だった場合のみ「取得不可」にする（元に文章があればそのまま残す）
+            final_body = "本文取得不可"
+            
+        final_date = format_datetime(parse_post_date(ext_date, now_jst)) if ext_date else post_date_raw
+        final_cmt = str(cmt_cnt) if cmt_cnt != -1 else comment_count_str
         
-        update_sheet_with_retry(ws, range_name=f'C{row_num}:F{row_num}', values=[new_row])
-        update_count += 1
-        time.sleep(1)
+        # 【復活】変更がある場合のみ更新するロジック
+        has_change = (final_body != current_body) or (final_cmt != comment_count_str) or (final_date != post_date_raw)
+        
+        if has_change:
+            new_row = [final_date, str(data_row[3]), final_body, final_cmt]
+            update_sheet_with_retry(ws, range_name=f'C{row_num}:F{row_num}', values=[new_row])
+            update_count += 1
+            time.sleep(1)
 
     print(f" ? {update_count} 行の詳細情報を更新しました。")
 
@@ -524,15 +501,24 @@ def sort_yahoo_sheet(gc: gspread.Client):
     except: return
     if len(ws.col_values(1)) <= 1: return
 
-    # 書式設定とソート
+    # 【復活】念入りなクリーニングとソート
     try:
-        ws.batch_update({"requests": [
-            {"repeatCell": {
-                "range": {"sheetId": ws.id, "startRowIndex": 1, "endRowIndex": ws.row_count, "startColumnIndex": 2, "endColumnIndex": 3},
-                "cell": {"userEnteredFormat": {"numberFormat": {"type": "DATE_TIME", "pattern": "yyyy/mm/dd hh:mm:ss"}}},
-                "fields": "userEnteredFormat.numberFormat"
-            }}
-        ]})
+        requests = []
+        days_of_week = ["月", "火", "水", "木", "金", "土", "日"]
+        for day in days_of_week:
+            requests.append({"findReplace": {"range": {"sheetId": ws.id, "startColumnIndex": 2, "endColumnIndex": 3}, "find": rf"\({day}\)", "replacement": "", "searchByRegex": True}})
+        requests.append({"findReplace": {"range": {"sheetId": ws.id, "startColumnIndex": 2, "endColumnIndex": 3}, "find": r"\s{2,}", "replacement": " ", "searchByRegex": True}})
+        
+        # 書式設定
+        requests.append({"repeatCell": {
+            "range": {"sheetId": ws.id, "startRowIndex": 1, "endRowIndex": ws.row_count, "startColumnIndex": 2, "endColumnIndex": 3},
+            "cell": {"userEnteredFormat": {"numberFormat": {"type": "DATE_TIME", "pattern": "yyyy/mm/dd hh:mm:ss"}}},
+            "fields": "userEnteredFormat.numberFormat"
+        }})
+        
+        ws.batch_update({"requests": requests})
+        time.sleep(1)
+        
         ws.sort((3, 'des'), range=f'A2:{gspread_util_col_to_letter(len(YAHOO_SHEET_HEADERS))}{ws.row_count}')
         set_row_height(ws, 21)
         print(" ? シートのソート・整形完了")
@@ -542,100 +528,59 @@ def sort_yahoo_sheet(gc: gspread.Client):
 # ====== ステップ4: Gemini分析 メイン ======
 
 def analyze_with_gemini_and_update_sheet(gc: gspread.Client):
-    if not AVAILABLE_API_KEYS:
-        return
-
+    if not AVAILABLE_API_KEYS: return
     sh = gc.open_by_key(SOURCE_SPREADSHEET_ID)
     try: ws = sh.worksheet(SOURCE_SHEET_NAME)
     except: return
-        
     all_values = ws.get_all_values(value_render_option='UNFORMATTED_VALUE')
     if len(all_values) <= 1: return
-        
     data_rows = all_values[1:]
     
-    # 分析が必要な行を特定してバッチを作成
     pending_rows = []
-    
     print("\n=====   ステップ④ Gemini分析 (バッチ処理 & キーローテーション) =====")
 
     for idx, data_row in enumerate(data_rows):
-        if len(data_row) < len(YAHOO_SHEET_HEADERS):
-            data_row.extend([''] * (len(YAHOO_SHEET_HEADERS) - len(data_row)))
-            
+        if len(data_row) < len(YAHOO_SHEET_HEADERS): data_row.extend([''] * (len(YAHOO_SHEET_HEADERS) - len(data_row)))
         row_num = idx + 2
         body = str(data_row[4])
-        
-        # 既に分析済みかチェック (G列～K列が埋まっているか)
         current_vals = data_row[6:11]
-        if all(str(v).strip() for v in current_vals):
-            continue
-            
-        # 本文がない場合はN/Aで即更新
+        
+        if all(str(v).strip() for v in current_vals): continue
         if not body.strip() or body == "本文取得不可":
             update_sheet_with_retry(ws, f'G{row_num}:K{row_num}', [['N/A(No Body)', 'N/A', 'N/A', 'N/A', 'N/A']])
             continue
             
-        pending_rows.append({
-            "id": row_num,
-            "body": body,
-            "title": str(data_row[1])
-        })
+        pending_rows.append({"id": row_num, "body": body, "title": str(data_row[1])})
 
-    # バッチ処理実行
     total_processed = 0
-    
     for i in range(0, len(pending_rows), BATCH_SIZE):
         batch = pending_rows[i : i + BATCH_SIZE]
-        
-        # バッチ実行
         results_map = analyze_batch(batch)
         
-        # 結果をスプレッドシートに書き込み
         if results_map:
-            # 成功時：まとめて書き込むことも可能だが、行が飛んでいる可能性も考慮し、個別に書き込む
             for item in batch:
                 res = results_map.get(item['id'])
                 if res:
-                    vals = [
-                        res.get("company_info", "N/A"),
-                        res.get("category", "N/A"),
-                        res.get("sentiment", "N/A"),
-                        res.get("nissan_related", "なし"),
-                        res.get("nissan_negative", "なし")
-                    ]
-                    # フィルタリング
-                    for j in [3, 4]: # nissan_related, nissan_negative
-                        if any(x in vals[j].lower() for x in ["not mentioned", "no mention", "言及はありません", "none"]):
-                            vals[j] = "なし"
-
+                    vals = [res.get("company_info", "N/A"), res.get("category", "N/A"), res.get("sentiment", "N/A"), res.get("nissan_related", "なし"), res.get("nissan_negative", "なし")]
+                    for j in [3, 4]:
+                        if any(x in vals[j].lower() for x in ["not mentioned", "no mention", "言及はありません", "none"]): vals[j] = "なし"
                     update_sheet_with_retry(ws, f'G{item["id"]}:K{item["id"]}', [vals])
                     total_processed += 1
                 else:
-                    # バッチ内でこの行だけ結果が取れなかった場合（稀）
                     print(f"      - 行 {item['id']} の結果がバッチに含まれていません。単体リトライします。")
                     single_res = analyze_single(item['body'])
-                    # ... 書き込み処理 (省略せず書く) ...
                     vals = [single_res["company_info"], single_res["category"], single_res["sentiment"], single_res["nissan_related"], single_res["nissan_negative"]]
                     update_sheet_with_retry(ws, f'G{item["id"]}:K{item["id"]}', [vals])
-
         else:
-            # バッチ全体が失敗した場合 -> フォールバックで1件ずつ処理
             print("    ! バッチ処理失敗。個別処理モード(Fallback)でリトライします。")
             for item in batch:
                 print(f"      - 個別リトライ: 行 {item['id']}")
                 res = analyze_single(item['body'])
                 vals = [res["company_info"], res["category"], res["sentiment"], res["nissan_related"], res["nissan_negative"]]
-                
-                # フィルタリング
                 for j in [3, 4]:
-                    if any(x in vals[j].lower() for x in ["not mentioned", "no mention", "言及はありません", "none"]):
-                        vals[j] = "なし"
-
+                    if any(x in vals[j].lower() for x in ["not mentioned", "no mention", "言及はありません", "none"]): vals[j] = "なし"
                 update_sheet_with_retry(ws, f'G{item["id"]}:K{item["id"]}', [vals])
                 total_processed += 1
-                
-                # 個別処理でもRPM制限を守るため待機
                 time.sleep(NORMAL_WAIT_SECONDS)
 
     print(f" ? Gemini分析完了: {total_processed} 件処理しました。")
@@ -644,7 +589,6 @@ def main():
     print("--- 統合スクリプト開始 ---")
     keywords = load_keywords(KEYWORD_FILE)
     if not keywords: sys.exit(0)
-    
     try: gc = build_gspread_client()
     except Exception as e: sys.exit(1)
 
@@ -656,7 +600,6 @@ def main():
     fetch_details_and_update_sheet(gc)
     sort_yahoo_sheet(gc)
     analyze_with_gemini_and_update_sheet(gc)
-    
     print("\n--- 統合スクリプト完了 ---")
 
 if __name__ == '__main__':
