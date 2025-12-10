@@ -573,7 +573,7 @@ def sort_yahoo_sheet(gc: gspread.Client):
             "fields": "userEnteredFormat.numberFormat"
         }})
         
-        ws.batch_update({"requests": requests})
+        ws.spreadsheet.batch_update({"requests": requests})
         time.sleep(1)
         
         # ソート範囲をL列まで拡張
