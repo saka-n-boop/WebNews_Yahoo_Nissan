@@ -13,7 +13,7 @@ def ensure_comments_sheet(sh: gspread.Spreadsheet):
     try:
         ws = sh.worksheet(COMMENTS_SHEET_NAME)
     except gspread.exceptions.WorksheetNotFound:
-        # 列数は多めに確保
+        # 列数は多めに確保 (300列 = KN列まで)
         ws = sh.add_worksheet(title=COMMENTS_SHEET_NAME, rows="1000", cols="300")
         
         # ヘッダー作成
@@ -31,7 +31,7 @@ def ensure_comments_sheet(sh: gspread.Spreadsheet):
 def fetch_comments_from_url(article_url: str) -> list[str]:
     """ 
     記事URLから全コメントを取得し、10件ごとに結合したリストを返す 
-    対策: &order=newer で新しい順に取得し、重複を厳密に排除する
+    対策: &order=newer で新しい順に取得し、重複と不要な管理テキストを排除する
     """
     
     # URL調整 (/commentsエンドポイントを作成)
@@ -83,6 +83,17 @@ def fetch_comments_from_url(article_url: str) -> list[str]:
                 comment_body = max([p.get_text(strip=True) for p in p_tags], key=len)
             
             if comment_body:
+                # ノイズ除去フィルタ
+                ignore_phrases = [
+                    "このコメントを削除しますか",
+                    "コメントを削除しました",
+                    "違反報告する",
+                    "非表示・報告",
+                    "投稿を受け付けました"
+                ]
+                if any(phrase in comment_body for phrase in ignore_phrases):
+                    continue
+
                 full_text = f"【投稿者: {user_name}】\n{comment_body}"
                 
                 # 重複チェック
@@ -155,27 +166,30 @@ def run_comment_collection(gc: gspread.Client, source_sheet_id: str, source_shee
         post_date = row[2]
         source = row[3]
         comment_count_str = row[5]
-        nissan_neg_text = row[11] # K列: 日産ネガ文
+        target_company = row[6] # G列
+        # sentiment = row[8]
+        nissan_neg_text = row[10] # K列
         
         # 重複チェック
         if url in existing_urls:
             continue
 
-        # --- 条件判定 (変更後) ---
+        # --- 条件判定 (改修版) ---
         is_target = False
         
-        # 条件①: コメント数が100件以上 (企業問わず)
-        try:
-            cnt = int(re.sub(r'\D', '', comment_count_str))
-            if cnt >= 100:
-                is_target = True
-        except:
-            pass
+        # 条件①: 対象企業が「日産」で始まり、かつコメント数が100件以上
+        if target_company.startswith("日産"):
+            try:
+                cnt = int(re.sub(r'\D', '', comment_count_str))
+                if cnt >= 100:
+                    is_target = True
+            except:
+                pass
             
         # 条件②: 日産ネガ文に記載がある ("なし" 以外)
+        # ※条件①を満たしていない場合のみチェック
         if not is_target:
             val = str(nissan_neg_text).strip()
-            # 「なし」「N/A」「-」以外の記述があれば対象
             if val and val not in ["なし", "N/A", "N/A(No Body)", "-"]:
                 is_target = True
         
@@ -195,7 +209,8 @@ def run_comment_collection(gc: gspread.Client, source_sheet_id: str, source_shee
         try:
             last_row = len(dest_ws.col_values(1))
             if last_row > 1:
-                dest_ws.sort((3, 'des'), range=f'A2:Z{last_row}') 
+                # 【修正済み】 ソート範囲を KN列(300列) まで広げる
+                dest_ws.sort((3, 'des'), range=f'A2:KN{last_row}') 
         except Exception as e:
             print(f"  ! ソートエラー: {e}")
             
